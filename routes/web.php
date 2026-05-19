@@ -71,6 +71,8 @@ Route::prefix('admin')->middleware(['auth', 'role:admin'])->group(function () {
     Route::get('/invoices/{id}/items',     [AdminController::class, 'getInvoiceItems'])->name('admin.invoices.items');
     Route::post('/invoices/{id}/void',     [AdminController::class, 'adminVoidInvoice'])->name('admin.invoices.void');
 
+    Route::post('/alerts/{id}/resolve',     [AdminController::class, 'resolveAlert'])->name('admin.alerts.resolve');
+
     // Users
     Route::get('/users',       [AdminController::class, 'getUsers'])->name('admin.users.list');
     Route::post('/users',      [AdminController::class, 'storeUser'])->name('admin.users.store');
@@ -86,6 +88,7 @@ Route::prefix('cashier')->name('cashier.')->middleware(['auth', 'role:cashier|ad
     Route::get('/invoice/{id}/print', [CashierDashboard::class, 'printInvoice'])   ->name('invoice.print');
     Route::get('/invoices/search',    [CashierDashboard::class, 'searchInvoices']) ->name('invoice.search');  // ← fixed
     Route::get('/products/lookup',    [CashierDashboard::class, 'productLookup'])  ->name('product.lookup');
+    Route::post('/alert',             [CashierDashboard::class, 'createAlert'])     ->name('alert.create');
     Route::get( '/queue',       [QueueController::class, 'cashierQueue'])->name('queue.list');
     Route::post('/queue/call',  [QueueController::class, 'call'])->name('queue.call');
     Route::post('/queue/done',  [QueueController::class, 'done'])->name('queue.done');
