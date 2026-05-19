@@ -120,3 +120,11 @@ body { font-family: 'DM Sans', sans-serif; background: #f0f2f8; color: #1a1d2e; 
 .divider { height: 1px; background: #eaecf4; margin: 6px 10px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin 1s linear infinite; display: inline-block; }
+.cp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.cp-card { background: #fff; border: 0.5px solid #e8eaf2; border-radius: 14px; padding: 16px; cursor: pointer; transition: border-color .15s; }
+.cp-card:hover { border-color: #c4c9dd; }
+.cp-card.active { border: 1.5px solid #3d52d5; }
+.cp-avatar { width: 40px; height: 40px; border-radius: 50%; background: #eef1ff; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: #3d52d5; flex-shrink: 0; }
+.cp-expand { overflow: hidden; max-height: 0; transition: max-height .35s ease; }
+.cp-expand.open { max-height: 700px; }
+.cp-stat-box { background: #f7f8fc; border-radius: 8px; padding: 10px 12px; }
