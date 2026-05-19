@@ -22,23 +22,26 @@ class AuthenticatedSessionController extends Controller
     /**
      * Handle an incoming authentication request.
      */
-    public function store(LoginRequest $request): RedirectResponse
-    {
-        $request->authenticate();
+   public function store(LoginRequest $request): RedirectResponse
+{
+    $request->authenticate();
 
-        $request->session()->regenerate();
+    $request->session()->regenerate();
 
-        $user = Auth::user();
-        if ($user->hasRole('admin')) {
-            return redirect()->intended(route('admin.dashboard', absolute: false));
-        } elseif ($user->hasRole('cashier')) {
-            return redirect()->intended(route('cashier.dashboard', absolute: false));
-        } elseif ($user->hasRole('customer')) {
-            return redirect()->intended(route('kiosk.index', absolute: false));
-        }
+    // Record shift start time at login
+    session(['shift_started_at' => now()->format('h:i A')]);
 
-        return redirect()->intended(route('dashboard', absolute: false));
+    $user = Auth::user();
+    if ($user->hasRole('admin')) {
+        return redirect()->intended(route('admin.dashboard', absolute: false));
+    } elseif ($user->hasRole('cashier')) {
+        return redirect()->intended(route('cashier.dashboard', absolute: false));
+    } elseif ($user->hasRole('customer')) {
+        return redirect()->intended(route('kiosk.index', absolute: false));
     }
+
+    return redirect()->intended(route('dashboard', absolute: false));
+}
 
     /**
      * Destroy an authenticated session.

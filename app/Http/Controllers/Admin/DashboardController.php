@@ -18,6 +18,10 @@ class DashboardController extends Controller
                                     ->whereColumn('stock_quantity', '<=', 'reorder_level')
                                     ->count(),
 
+            'active_alerts'  => DB::table('alerts')
+                                    ->where('status', 'active')
+                                    ->count(),
+
             'total_products' => DB::table('products')
                                     ->where('is_active', 1)
                                     ->count(),

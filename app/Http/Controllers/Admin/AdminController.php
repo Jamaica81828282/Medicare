@@ -22,6 +22,7 @@ class AdminController extends Controller
             'total_invoices'  => DB::table('invoices')->where('status', 'paid')->count(),
             'today_revenue'   => DB::table('invoices')->where('status', 'paid')->whereDate('invoice_date', $today)->sum('grand_total'),
             'low_stock'       => DB::table('products')->where('is_active', 1)->whereRaw('stock_quantity <= reorder_level')->count(),
+            'active_alerts'   => DB::table('alerts')->where('status', 'active')->count(),
             'expiring_30'     => DB::table('product_batches')->where('is_active', 1)->where('quantity', '>', 0)->where('expiry_date', '<=', Carbon::now()->addDays(30))->count(),
             'total_cashiers'  => DB::table('model_has_roles')->join('roles', 'roles.id', '=', 'model_has_roles.role_id')->where('roles.name', 'cashier')->count(),
             'month_revenue'   => DB::table('invoices')->where('status', 'paid')->whereMonth('invoice_date', $today->month)->whereYear('invoice_date', $today->year)->sum('grand_total'),
@@ -32,7 +33,37 @@ class AdminController extends Controller
         $tax_rates  = DB::table('tax_rates')->where('is_active', 1)->get();
         $uoms       = DB::table('units_of_measure')->get();
 
-        return view('admin.dashboard', compact('stats', 'categories', 'suppliers', 'tax_rates', 'uoms'));
+        $alerts = DB::table('alerts')
+            ->where('alerts.status', 'active')
+            ->join('products', 'products.id', '=', 'alerts.product_id')
+            ->select(
+                'alerts.id',
+                'alerts.message',
+                'alerts.created_at',
+                'products.product_name',
+                'products.sku'
+            )
+            ->orderByDesc('alerts.created_at')
+            ->get();
+
+        return view('admin.dashboard', compact('stats', 'categories', 'suppliers', 'tax_rates', 'uoms', 'alerts'));
+    }
+
+    public function resolveAlert($id)
+    {
+        $alert = DB::table('alerts')->where('id', $id)->where('status', 'active')->first();
+        if (!$alert) {
+            return response()->json(['error' => 'Alert not found or already resolved'], 404);
+        }
+
+        DB::table('alerts')->where('id', $id)->update([
+            'status'      => 'resolved',
+            'resolved_by' => Auth::id(),
+            'resolved_at' => now(),
+            'updated_at'  => now(),
+        ]);
+
+        return response()->json(['success' => true]);
     }
 
     /**
@@ -469,11 +500,16 @@ public function serveProductImage($id)
             ->leftJoin('users as u',         'u.id',  '=', 'i.cashier_id')
             ->leftJoin('payment_methods as pm','pm.id','=', 'i.payment_method_id')
             ->select(
-                'i.*',
-                DB::raw("TRIM(CONCAT(COALESCE(c.first_name,''), ' ', COALESCE(c.last_name,''))) as customer_name"),
-                'u.name as cashier_name',
-                'pm.method_name as payment_method'
-            );
+    'i.id',   // ← explicit so joins don't overwrite it
+    'i.invoice_number', 'i.invoice_date', 'i.status',
+    'i.customer_id', 'i.cashier_id', 'i.payment_method_id',
+    'i.subtotal', 'i.total_discount', 'i.total_tax', 'i.grand_total',
+    'i.amount_tendered', 'i.change_amount', 'i.prescription_no',
+    'i.voided_reason', 'i.voided_at', 'i.created_at', 'i.updated_at',
+    DB::raw("TRIM(CONCAT(COALESCE(c.first_name,''), ' ', COALESCE(c.last_name,''))) as customer_name"),
+    'u.name as cashier_name',
+    'pm.method_name as payment_method'
+);
 
         if ($q) {
             $query->where(function ($qb) use ($q) {
@@ -530,28 +566,37 @@ public function serveProductImage($id)
         ]);
     }
 
-    public function getInvoiceItems($id)
-    {
+public function getInvoiceItems($id)
+{
+    try {
         $items = DB::table('invoice_items as ii')
-            ->join('products as p',             'p.id',  '=', 'ii.product_id')
-            ->leftJoin('units_of_measure as u',  'u.id',  '=', 'ii.uom_id')
-            ->leftJoin('tax_rates as t',          't.id',  '=', 'ii.tax_rate_id')
+            ->leftJoin('products as p', 'p.id', '=', 'ii.product_id')
+            ->leftJoin('tax_rates as t', 't.id', '=', 'ii.tax_rate_id')
+            ->where('ii.invoice_id', $id)
             ->select(
-                'ii.id', 'ii.invoice_id', 'ii.product_id', 'ii.quantity', 'ii.unit_price', 'ii.uom_id', 'ii.tax_rate_id',
-                'p.product_name',
-                'p.generic_name',
-                'u.uom_code',
+                'ii.*',
+                'p.product_name as p_product_name',
+                'p.generic_name as p_generic_name',
                 DB::raw('COALESCE(t.rate_percentage, 0) as tax_rate_pct'),
                 DB::raw('ii.quantity * ii.unit_price as line_subtotal'),
                 DB::raw('ii.quantity * ii.unit_price * COALESCE(t.rate_percentage, 0) / 100 as line_tax'),
                 DB::raw('ii.quantity * ii.unit_price * (1 + COALESCE(t.rate_percentage, 0) / 100) as line_total')
             )
-            ->where('ii.invoice_id', $id)
-            ->orderBy('ii.id', 'asc')
-            ->get();
+            ->orderBy('ii.id')
+            ->get()
+            ->map(function($item) {
+                $item->product_name = $item->product_name ?? $item->p_product_name ?? 'Unknown';
+                $item->generic_name = $item->p_generic_name ?? '';
+                $item->uom_code     = 'PC';
+                return $item;
+            });
 
         return response()->json($items);
+
+    } catch (\Exception $e) {
+        return response()->json(['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()], 500);
     }
+}
 
     public function adminVoidInvoice(Request $request, $id)
     {
@@ -587,60 +632,69 @@ public function serveProductImage($id)
         }
     }
 
-    public function exportInvoices(Request $request)
-    {
-        $status   = $request->get('status', '');
-        $cashier  = $request->get('cashier_id', '');
-        $method   = $request->get('payment_method', '');
-        $dateFrom = $request->get('date_from', '');
-        $dateTo   = $request->get('date_to', '');
+public function exportInvoices(Request $request)
+{
+    $q        = $request->get('q', '');        // ← ADD THIS LINE
+    $status   = $request->get('status', '');
+    $cashier  = $request->get('cashier_id', '');
+    $method   = $request->get('payment_method', '');
+    $dateFrom = $request->get('date_from', '');
+    $dateTo   = $request->get('date_to', '');
 
-        $query = DB::table('invoices as i')
-            ->leftJoin('customers as c',      'c.id',   '=', 'i.customer_id')
-            ->leftJoin('users as u',          'u.id',   '=', 'i.cashier_id')
-            ->leftJoin('payment_methods as pm','pm.id', '=', 'i.payment_method_id')
-            ->select(
-                'i.invoice_number', 'i.invoice_date', 'i.status',
-                DB::raw("TRIM(CONCAT(COALESCE(c.first_name,''), ' ', COALESCE(c.last_name,''))) as customer_name"),
-                'c.phone as customer_phone',
-                'i.subtotal', 'i.total_discount', 'i.total_tax', 'i.grand_total',
-                'i.amount_tendered', 'i.change_amount',
-                'pm.method_name as payment_method',
-                'u.name as cashier_name',
-                'i.prescription_no', 'i.voided_reason'
-            );
+    $query = DB::table('invoices as i')
+        ->leftJoin('customers as c',       'c.id',   '=', 'i.customer_id')
+        ->leftJoin('users as u',           'u.id',   '=', 'i.cashier_id')
+        ->leftJoin('payment_methods as pm','pm.id',  '=', 'i.payment_method_id')
+        ->select(
+            'i.invoice_number', 'i.invoice_date', 'i.status',
+            DB::raw("TRIM(CONCAT(COALESCE(c.first_name,''), ' ', COALESCE(c.last_name,''))) as customer_name"),
+            'c.phone as customer_phone',
+            'i.subtotal', 'i.total_discount', 'i.total_tax', 'i.grand_total',
+            'i.amount_tendered', 'i.change_amount',
+            'pm.method_name as payment_method',
+            'u.name as cashier_name',
+            'i.prescription_no', 'i.voided_reason'
+        );
 
-        if ($status)   $query->where('i.status', $status);
-        if ($cashier)  $query->where('i.cashier_id', $cashier);
-        if ($method)   $query->where('i.payment_method_id', $method);
-        if ($dateFrom) $query->whereDate('i.invoice_date', '>=', $dateFrom);
-        if ($dateTo)   $query->whereDate('i.invoice_date', '<=', $dateTo);
-
-        $rows = $query->orderBy('i.invoice_date', 'desc')->get();
-
-        $csv = "Invoice #,Date,Status,Customer,Phone,Subtotal,Discount,VAT,Grand Total,Tendered,Change,Payment Method,Cashier,Prescription No,Void Reason\n";
-
-        foreach ($rows as $row) {
-            $csv .= implode(',', array_map(
-                fn($v) => '"' . str_replace('"', '""', $v ?? '') . '"',
-                [
-                    $row->invoice_number, $row->invoice_date,   $row->status,
-                    $row->customer_name,  $row->customer_phone,
-                    $row->subtotal,       $row->total_discount,  $row->total_tax,
-                    $row->grand_total,    $row->amount_tendered, $row->change_amount,
-                    $row->payment_method, $row->cashier_name,
-                    $row->prescription_no, $row->voided_reason,
-                ]
-            )) . "\n";
-        }
-
-        $filename = 'invoices_export_' . now()->format('Ymd_His') . '.csv';
-
-        return response($csv, 200, [
-            'Content-Type'        => 'text/csv',
-            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
-        ]);
+    // ── Apply the same search filter as the invoice list ──
+    if ($q) {
+        $query->where(function ($qb) use ($q) {
+            $qb->where('i.invoice_number', 'like', "%{$q}%")
+               ->orWhereRaw("CONCAT(c.first_name,' ',c.last_name) LIKE ?", ["%{$q}%"]);
+        });
     }
+
+    if ($status)   $query->where('i.status', $status);
+    if ($cashier)  $query->where('i.cashier_id', $cashier);
+    if ($method)   $query->where('i.payment_method_id', $method);
+    if ($dateFrom) $query->whereDate('i.invoice_date', '>=', $dateFrom);
+    if ($dateTo)   $query->whereDate('i.invoice_date', '<=', $dateTo);
+
+    $rows = $query->orderBy('i.invoice_date', 'desc')->get();
+
+    $csv = "Invoice #,Date,Status,Customer,Phone,Subtotal,Discount,VAT,Grand Total,Tendered,Change,Payment Method,Cashier,Prescription No,Void Reason\n";
+
+    foreach ($rows as $row) {
+        $csv .= implode(',', array_map(
+            fn($v) => '"' . str_replace('"', '""', $v ?? '') . '"',
+            [
+                $row->invoice_number, $row->invoice_date,    $row->status,
+                $row->customer_name,  $row->customer_phone,
+                $row->subtotal,       $row->total_discount,   $row->total_tax,
+                $row->grand_total,    $row->amount_tendered,  $row->change_amount,
+                $row->payment_method, $row->cashier_name,
+                $row->prescription_no, $row->voided_reason,
+            ]
+        )) . "\n";
+    }
+
+    $filename = 'invoices_export_' . now()->format('Ymd_His') . '.csv';
+
+    return response($csv, 200, [
+        'Content-Type'        => 'text/csv',
+        'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+    ]);
+}
 
     // ═══════════════════════════════════════════════════
     //  CASHIER ACCOUNT MANAGEMENT

@@ -70,7 +70,7 @@ $weeklySales = collect(range(6, 0))->map(function ($daysAgo) {
     // ── SHIFT REPORT ───────────────────────────────────────────────
     $shiftReport = [
         'cashier_name'       => Auth::user()->name,
-        'shift_start'        => Carbon::today()->format('h:i A'),
+        'shift_start' => session('shift_started_at'),
         'total_sales'        => DB::table('invoices')->where('status','paid')->where('cashier_id',Auth::id())->whereDate('invoice_date',$today)->sum('grand_total'),
         'total_transactions' => DB::table('invoices')->where('status','paid')->where('cashier_id',Auth::id())->whereDate('invoice_date',$today)->count(),
         'total_discount'     => DB::table('invoices')->where('status','paid')->where('cashier_id',Auth::id())->whereDate('invoice_date',$today)->sum('total_discount'),
@@ -138,13 +138,20 @@ $stats = [
             return $inv;
         });
 
-    $recentPaid = DB::table('invoices')
-        ->leftJoin('customers','invoices.customer_id','=','customers.id')
-        ->where('invoices.status','paid')
-        ->whereDate('invoices.invoice_date',$today)
-        ->select('invoices.*', DB::raw("CONCAT(customers.first_name,' ',customers.last_name) as customer_name"))
-        ->orderBy('invoices.updated_at','desc')
-        ->limit(10)->get();
+   $recentPaid = DB::table('invoices')
+    ->leftJoin('customers', 'invoices.customer_id', '=', 'customers.id')
+    ->leftJoin('payment_methods', 'invoices.payment_method_id', '=', 'payment_methods.id')
+    ->where('invoices.status', 'paid')
+    ->whereDate('invoices.invoice_date', $today)
+    ->select(
+        'invoices.*',
+        DB::raw("CONCAT(customers.first_name, ' ', customers.last_name) as customer_name"),
+        'payment_methods.method_name as payment_method_name',
+        DB::raw("(SELECT COUNT(*) FROM invoice_items WHERE invoice_items.invoice_id = invoices.id) as items_count")
+    )
+    ->orderBy('invoices.updated_at', 'desc')
+    ->limit(10)
+    ->get();
 
     $paymentMethods = DB::table('payment_methods')->where('is_active',1)->get();
     $discountTypes  = DB::table('discount_types')->where('is_active',1)->get();
@@ -418,5 +425,42 @@ public function searchInvoices(Request $request)
             });
 
         return response()->json($products);
+    }
+
+    // ── CREATE STOCK ALERT ─────────────────────────────────────────────
+    public function createAlert(Request $request)
+    {
+        $request->validate([
+            'product_id' => 'required|integer|exists:products,id',
+            'message'    => 'required|string|max:500',
+        ]);
+
+        $product = DB::table('products')->where('id', $request->product_id)->first();
+
+        if (!$product) {
+            return response()->json(['error' => 'Product not found'], 404);
+        }
+
+        // Check if there's already an active alert for this product
+        $existing = DB::table('alerts')
+            ->where('product_id', $request->product_id)
+            ->where('status', 'active')
+            ->first();
+
+        if ($existing) {
+            return response()->json(['error' => 'An active alert already exists for this product'], 422);
+        }
+
+        DB::table('alerts')->insert([
+            'type'       => 'low_stock',
+            'product_id' => $request->product_id,
+            'created_by' => Auth::id(),
+            'message'    => $request->message,
+            'status'     => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Alert sent to admin']);
     }
 }
