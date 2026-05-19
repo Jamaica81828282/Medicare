@@ -590,6 +590,135 @@ function doInvSearch(q) {
   });
 }
 
+var _currentAlertProduct = null;
+var _currentAlertProductButton = null;
+
+function animateAlertButton(button) {
+  if (!button) return;
+  button.classList.add('btn-clicked');
+  setTimeout(function() {
+    button.classList.remove('btn-clicked');
+  }, 140);
+}
+
+function sendLowStockAlert(button, productId, productName, sku) {
+  if (!button || button.disabled) return;
+
+  animateAlertButton(button);
+  var defaultMessage = 'Low stock alert for ' + productName + ' (' + sku + ').';
+  button.disabled = true;
+  button.textContent = 'Sending...';
+  button.classList.add('sending');
+
+  fetch(ROUTE_ALERT_CREATE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' },
+    body: JSON.stringify({ product_id: productId, message: defaultMessage }),
+  })
+  .then(function(r) {
+    return r.text().then(function(text) {
+      if (!text) {
+        throw new Error('Empty server response');
+      }
+      try {
+        return JSON.parse(text);
+      } catch (err) {
+        throw new Error('Invalid JSON response: ' + text);
+      }
+    });
+  })
+  .then(function(data) {
+    if (data.success) {
+      button.textContent = 'Alert Sent';
+      button.classList.remove('sending');
+      button.classList.add('alert-sent');
+      showToast(data.message || 'Alert sent to admin', 'success');
+    } else {
+      button.disabled = false;
+      button.textContent = 'Alert Admin';
+      button.classList.remove('sending');
+      showToast(data.error || 'Could not send alert', 'error');
+    }
+  })
+  .catch(function(err) {
+      button.disabled = false;
+      button.textContent = 'Alert Admin';
+      button.classList.remove('sending');
+      showToast('Could not send alert' + (err && err.message ? ': ' + err.message : ''), 'error');
+  });
+}
+
+function alertAdmin(button, productId, productName, sku) {
+  _currentAlertProductButton = button;
+  _currentAlertProduct = { id: productId, name: productName, sku: sku };
+  document.getElementById('alertModalTitle').textContent = 'Alert Admin: ' + productName;
+  document.getElementById('alertModalSku').textContent   = 'SKU: ' + sku;
+  document.getElementById('alertMessage').value          = '';
+  document.getElementById('alertModal').style.display    = 'flex';
+  document.getElementById('alertMessage').focus();
+}
+
+function closeAlertModal() {
+  document.getElementById('alertModal').style.display = 'none';
+  _currentAlertProduct = null;
+  _currentAlertProductButton = null;
+}
+
+function submitAlert() {
+  if (!_currentAlertProduct) return;
+  var message = document.getElementById('alertMessage').value.trim();
+  var productName = _currentAlertProduct.name;
+  var defaultMessage = 'Low stock alert for ' + productName + ' (' + _currentAlertProduct.sku + ').';
+  if (!message) message = defaultMessage;
+
+  var btn = document.getElementById('alertSubmitBtn');
+  btn.disabled = true;
+  btn.style.opacity = '0.6';
+
+  fetch(ROUTE_ALERT_CREATE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' },
+    body: JSON.stringify({ product_id: _currentAlertProduct.id, message: message }),
+  })
+  .then(function(r) {
+    return r.text().then(function(text) {
+      if (!text) {
+        throw new Error('Empty server response');
+      }
+      try {
+        return JSON.parse(text);
+      } catch (err) {
+        throw new Error('Invalid JSON response: ' + text);
+      }
+    });
+  })
+  .then(function(data) {
+    if (data.success) {
+      if (_currentAlertProductButton) {
+        _currentAlertProductButton.textContent = 'Alert Sent';
+        _currentAlertProductButton.disabled = true;
+        _currentAlertProductButton.classList.add('alert-sent');
+      }
+      closeAlertModal();
+      showToast(data.message || 'Alert sent to admin', 'success');
+    } else {
+      showToast(data.error || 'Could not send alert', 'error');
+    }
+  })
+  .catch(function(err) {
+      showToast('Could not send alert' + (err && err.message ? ': ' + err.message : ''), 'error');
+  })
+  .finally(function() {
+    btn.disabled = false;
+    btn.style.opacity = '';
+    _currentAlertProductButton = null;
+  });
+}
+
+window.alertAdmin       = alertAdmin;
+window.closeAlertModal  = closeAlertModal;
+window.submitAlert      = submitAlert;
+
 // ── HELPERS ────────────────────────────────────────────────────────────
 function refreshPage() { location.reload(); }
 function escHtml(s) {
