@@ -220,54 +220,108 @@
           @endif
         </div>
 
-        {{-- ══════════════════ SECTION: TODAY'S SALES ══════════════════ --}}
-        <div class="section" id="section-completed">
-          <div style="background:white;border-radius:16px;border:1px solid #eaecf4;overflow:hidden;">
-            <div style="padding:18px 20px;border-bottom:1px solid #eaecf4;display:flex;justify-content:space-between;align-items:center;">
-              <div style="font-size:15px;font-weight:700;color:#1a1d2e;">Today's Transactions</div>
-              <div style="font-size:13px;color:#8891b4;">{{ now()->format('M j, Y') }}</div>
-            </div>
-            <div style="overflow-x:auto;">
-              <table class="rtable">
-                <thead>
-                  <tr>
-                    <th>Invoice #</th>
-                    <th>Customer</th>
-                    <th>Items</th>
-                    <th>Total</th>
-                    <th>Payment</th>
-                    <th>Time</th>
-                    <th>Status</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  @forelse($recentPaid as $inv)
-                  <tr>
-                    <td style="font-family:'DM Mono',monospace;font-size:12px;color:#6b7494;">{{ $inv->invoice_number }}</td>
-                    <td style="font-weight:600;">{{ $inv->customer_name ?: 'Walk-in' }}</td>
-                    <td style="color:#8891b4;">—</td>
-                    <td style="font-weight:700;">₱{{ number_format($inv->grand_total,2) }}</td>
-                    <td style="color:#8891b4;">—</td>
-                    <td style="color:#8891b4;">{{ \Carbon\Carbon::parse($inv->updated_at)->format('h:i A') }}</td>
-                    <td><span class="status-paid">Paid</span></td>
-                    <td>
-                      <a href="{{ route('cashier.invoice.print', $inv->id) }}" target="_blank"
-                        style="display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;color:#3d52d5;text-decoration:none;padding:4px 10px;border:1.5px solid #a5b4fc;border-radius:7px;transition:all .15s;"
-                        onmouseover="this.style.background='#eef1ff'" onmouseout="this.style.background='transparent'">
-                        <span class="material-symbols-rounded" style="font-size:14px;">print</span> Print
-                      </a>
-                    </td>
-                  </tr>
-                  @empty
-                  <tr><td colspan="8" style="text-align:center;padding:40px;color:#8891b4;">No transactions today yet</td></tr>
-                  @endforelse
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+       {{-- ══════════════════ SECTION: TODAY'S SALES ══════════════════ --}}
+<div class="section" id="section-completed">
+<style>
+.tx-card{background:white;border:1px solid #eaecf4;border-radius:14px;padding:16px 18px;cursor:pointer;transition:border-color .15s,background .15s;margin-bottom:10px;}
+.tx-card:hover{border-color:#c7cde8;background:#fafbff;}
+.tx-card:hover .inv-num{color:#3d52d5;}
+.tx-avatar{width:40px;height:40px;border-radius:50%;background:#eef1ff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#3d52d5;flex-shrink:0;font-family:'DM Mono',monospace;}
+.inv-num{font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:#3d52d5;letter-spacing:.02em;transition:color .15s;}
+.badge-pay{display:inline-flex;align-items:center;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;}
+.badge-cash{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;}
+.badge-gcash{background:#f5f3ff;color:#6d28d9;border:1px solid #ddd6fe;}
+.badge-card{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;}
+.badge-paid-status{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;}
+</style>
 
+  {{-- Mini Stats --}}
+  @php
+    $txTotal   = $recentPaid->sum('grand_total');
+    $txCount   = $recentPaid->count();
+    $txAvg     = $txCount ? $txTotal / $txCount : 0;
+  @endphp
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;">
+    <div style="background:white;border:1px solid #eaecf4;border-radius:12px;padding:14px 18px;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#b0b8d4;margin-bottom:6px;">Total Revenue</div>
+      <div style="font-size:22px;font-weight:900;color:#0f1117;letter-spacing:-.03em;font-family:'DM Mono',monospace;">₱{{ number_format($txTotal,2) }}</div>
+    </div>
+    <div style="background:white;border:1px solid #eaecf4;border-radius:12px;padding:14px 18px;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#b0b8d4;margin-bottom:6px;">Transactions</div>
+      <div style="font-size:22px;font-weight:900;color:#0f1117;letter-spacing:-.03em;font-family:'DM Mono',monospace;">{{ $txCount }}</div>
+    </div>
+    <div style="background:white;border:1px solid #eaecf4;border-radius:12px;padding:14px 18px;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#b0b8d4;margin-bottom:6px;">Avg. Order</div>
+      <div style="font-size:22px;font-weight:900;color:#0f1117;letter-spacing:-.03em;font-family:'DM Mono',monospace;">₱{{ number_format($txAvg,2) }}</div>
+    </div>
+  </div>
+
+  {{-- Cards --}}
+  @forelse($recentPaid as $inv)
+  @php
+    $initials = collect(explode(' ', trim($inv->customer_name)))
+                  ->filter()->map(fn($w) => strtoupper($w[0]))->take(2)->join('');
+    $initials = $initials ?: 'WI';
+    $payBadgeClass = match(strtolower($inv->payment_method_name ?? '')) {
+      'gcash'       => 'badge-gcash',
+      'credit card',
+      'debit card'  => 'badge-card',
+      default       => 'badge-cash',
+    };
+  @endphp
+  <div class="tx-card" onclick="window.open('{{ route('cashier.invoice.print', $inv->id) }}','_blank')">
+    <div style="display:flex;align-items:center;gap:14px;">
+      <div class="tx-avatar">{{ $initials }}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+          <span class="inv-num">{{ $inv->invoice_number }}</span>
+          <span class="badge-paid-status">
+            <span class="material-symbols-rounded" style="font-size:12px;">check_circle</span>Paid
+          </span>
+          <span class="badge-pay {{ $payBadgeClass }}">{{ $inv->payment_method_name ?: 'Cash' }}</span>
+        </div>
+        <div style="font-size:15px;font-weight:700;color:#0f1117;margin-top:4px;">
+          {{ trim($inv->customer_name) ?: 'Walk-in' }}
+        </div>
+      
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        <div style="font-size:19px;font-weight:900;color:#0f1117;font-family:'DM Mono',monospace;letter-spacing:-.02em;">
+          ₱{{ number_format($inv->grand_total,2) }}
+        </div>
+        <div style="font-size:11.5px;color:#9aa3c2;margin-top:2px;">
+          {{ $inv->items_count }} {{ $inv->items_count == 1 ? 'item' : 'items' }}
+          · {{ \Carbon\Carbon::parse($inv->updated_at)->format('h:i A') }}
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid #f0f2f8;">
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#9aa3c2;">
+        <span class="material-symbols-rounded" style="font-size:14px;">person</span>
+        {{ Auth::user()->name }}
+        @if($inv->prescription_no)
+          <span style="margin:0 4px;color:#e2e4ef;">|</span>
+          <span class="material-symbols-rounded" style="font-size:14px;">receipt</span>
+          Rx: {{ $inv->prescription_no }}
+        @endif
+      </div>
+      <a href="{{ route('cashier.invoice.print', $inv->id) }}" target="_blank"
+        onclick="event.stopPropagation()"
+        style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:#3d52d5;text-decoration:none;padding:5px 12px;border:1.5px solid #a5b4fc;border-radius:8px;transition:all .15s;"
+        onmouseover="this.style.background='#eef1ff'" onmouseout="this.style.background='transparent'">
+        <span class="material-symbols-rounded" style="font-size:14px;">print</span> Print
+      </a>
+    </div>
+  </div>
+  @empty
+  <div style="background:white;border:1px solid #eaecf4;border-radius:14px;padding:56px 20px;text-align:center;">
+    <span class="material-symbols-rounded" style="font-size:40px;color:#d4d8ea;">receipt_long</span>
+    <div style="font-size:13px;font-weight:700;color:#6b7494;margin-top:10px;">No transactions today yet</div>
+    <div style="font-size:11px;color:#9aa3c2;margin-top:3px;">Paid invoices will appear here</div>
+  </div>
+  @endforelse
+
+</div>
         {{-- ══════════════════ SECTION: SEARCH INVOICE ══════════════════ --}}
         <div class="section" id="section-search">
           <div style="margin-bottom:20px;">
@@ -419,6 +473,7 @@
                     <th>Reorder At</th>
                     <th>Stock Level</th>
                     <th>Status</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -452,6 +507,11 @@
                       @else
                         <span class="stock-low">Low Stock</span>
                       @endif
+                    </td>
+                    <td>
+                      <button type="button" class="alert-row-btn" onclick='sendLowStockAlert(this, {{ $prod->id }}, @json($prod->product_name), @json($prod->sku))' style="border:none;background:#f97316;color:white;padding:8px 12px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease,background .12s ease;">
+                        Alert Admin
+                      </button>
                     </td>
                   </tr>
                   @endforeach
@@ -675,74 +735,150 @@
 
 </div>
 
-        {{-- ══════════════════ SECTION: SHIFT REPORT ══════════════════ --}}
-        <div class="section" id="section-shift">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-            <div>
-              <div style="font-size:14px;font-weight:700;color:#1a1d2e;margin-bottom:4px;">Shift Report</div>
-              <div style="font-size:13px;color:#8891b4;">Your performance for today · {{ now()->format('F j, Y') }}</div>
-            </div>
-            <button onclick="window.print()" style="display:flex;align-items:center;gap:6px;padding:8px 16px;border:1.5px solid #eaecf4;border-radius:8px;background:white;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:#6b7494;cursor:pointer;">
-              <span class="material-symbols-rounded" style="font-size:16px;">print</span> Print Report
-            </button>
-          </div>
+      {{-- ══════════════════ SECTION: SHIFT REPORT ══════════════════ --}}
+<div class="section" id="section-shift">
+<style>
+.sr-stat{background:#f8f9fc;border-radius:10px;padding:16px 18px;text-align:center;}
+.sr-stat-label{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9aa3c2;margin-bottom:6px;}
+.sr-stat-val{font-size:24px;font-weight:800;color:#0f1117;letter-spacing:-.03em;font-family:'DM Mono',monospace;}
+.prod-bar-track{flex:1;height:4px;background:#f0f2f8;border-radius:4px;overflow:hidden;}
+.prod-bar-fill{height:4px;border-radius:4px;transition:width .6s ease;}
 
-          <div style="background:linear-gradient(135deg,#3d52d5 0%,#5b6ef0 100%);border-radius:16px;padding:24px;margin-bottom:20px;color:white;">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <div>
-                <div style="font-size:11px;opacity:.75;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">Cashier on Duty</div>
-                <div style="font-size:22px;font-weight:700;">{{ $shiftReport['cashier_name'] ?? Auth::user()->name }}</div>
-                <div style="font-size:13px;opacity:.75;margin-top:4px;">Shift started {{ $shiftReport['shift_start'] ?? now()->startOfDay()->format('h:i A') }}</div>
-              </div>
-              <div style="text-align:right;">
-                <div style="font-size:11px;opacity:.75;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">Total Collected</div>
-                <div style="font-size:32px;font-weight:800;">₱{{ number_format($shiftReport['total_sales'] ?? 0,2) }}</div>
-              </div>
-            </div>
-          </div>
+@media print {
+  /* Hide everything except the shift report */
+  body * { visibility: hidden; }
+  #section-shift, #section-shift * { visibility: visible; }
+  #section-shift { position: absolute; top: 0; left: 0; width: 100%; padding: 32px 40px; }
 
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
-            <div style="background:white;border-radius:12px;padding:16px;border:1px solid #eaecf4;text-align:center;">
-              <div style="font-size:24px;font-weight:700;color:#1a1d2e;">{{ $shiftReport['total_transactions'] ?? 0 }}</div>
-              <div style="font-size:11px;color:#8891b4;margin-top:4px;">Transactions</div>
-            </div>
-            <div style="background:white;border-radius:12px;padding:16px;border:1px solid #eaecf4;text-align:center;">
-              <div style="font-size:24px;font-weight:700;color:#dc2626;">{{ $shiftReport['voided_count'] ?? 0 }}</div>
-              <div style="font-size:11px;color:#8891b4;margin-top:4px;">Voided</div>
-            </div>
-            <div style="background:white;border-radius:12px;padding:16px;border:1px solid #eaecf4;text-align:center;">
-              <div style="font-size:24px;font-weight:700;color:#d97706;">— ₱{{ number_format($shiftReport['total_discount'] ?? 0,0) }}</div>
-              <div style="font-size:11px;color:#8891b4;margin-top:4px;">Discounts</div>
-            </div>
-            <div style="background:white;border-radius:12px;padding:16px;border:1px solid #eaecf4;text-align:center;">
-              <div style="font-size:24px;font-weight:700;color:#3d52d5;">₱{{ number_format($shiftReport['total_tax'] ?? 0,0) }}</div>
-              <div style="font-size:11px;color:#8891b4;margin-top:4px;">VAT Collected</div>
-            </div>
-          </div>
+  /* Hide the print button itself */
+  .sr-no-print { display: none !important; }
 
-          @if(!empty($shiftReport['top_products']) && $shiftReport['top_products']->count() > 0)
-          <div style="background:white;border-radius:16px;border:1px solid #eaecf4;overflow:hidden;">
-            <div style="padding:16px 20px;border-bottom:1px solid #eaecf4;font-size:13px;font-weight:700;color:#1a1d2e;">Top 5 Products Sold This Shift</div>
-            <table class="rtable">
-              <thead><tr><th>#</th><th>Product</th><th>Units Sold</th></tr></thead>
-              <tbody>
-                @foreach($shiftReport['top_products'] as $i => $prod)
-                <tr>
-                  <td style="color:#8891b4;font-weight:700;">{{ $i+1 }}</td>
-                  <td style="font-weight:600;">{{ $prod->product_name }}</td>
-                  <td><span style="background:#eef1ff;color:#3d52d5;font-weight:700;padding:3px 10px;border-radius:8px;font-size:12px;">{{ number_format($prod->qty_sold) }} units</span></td>
-                </tr>
-                @endforeach
-              </tbody>
-            </table>
-          </div>
-          @else
-          <div style="background:white;border-radius:16px;border:1.5px dashed #dde1ec;padding:40px;text-align:center;color:#8891b4;">
-            <div style="font-size:14px;font-weight:600;color:#1a1d2e;margin-bottom:4px;">No sales yet this shift</div>
-            <div style="font-size:13px;">Top products will appear after completing transactions</div>
-          </div>
-          @endif
+  /* Reset card styles to flat for print */
+  .sr-print-header { background: none !important; border: none !important; border-bottom: 2px solid #0f1117!important; border-radius: 0 !important; padding: 0 0 16px !important; margin-bottom: 20px !important; }
+  .sr-stat { background: none !important; border: 1px solid #dde1ec !important; }
+
+  /* Print header branding */
+  .sr-print-brand { display: block !important; }
+
+  /* Force colors for print */
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style>
+
+  {{-- Print-only brand header --}}
+  <div class="sr-print-brand" style="display:none;margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid #eaecf4;">
+    <div style="font-size:18px;font-weight:800;color:#0f1117;">MediCare</div>
+    <div style="font-size:11px;color:#9aa3c2;margin-top:2px;">Cashier Shift Report · {{ now()->format('F j, Y') }}</div>
+  </div>
+
+  {{-- Section header --}}
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;" class="sr-no-print-header">
+    <div>
+      <div style="font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#3d52d5;margin-bottom:3px;">Reports</div>
+      <div style="font-size:22px;font-weight:800;color:#0f1117;letter-spacing:-.03em;">Shift Report</div>
+      <div style="font-size:12px;color:#9aa3c2;margin-top:4px;">Your performance for today · {{ now()->format('F j, Y') }}</div>
+    </div>
+    <button onclick="window.print()" class="sr-no-print"
+      style="display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border:1.5px solid #eaecf4;border-radius:10px;background:white;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;color:#6b7494;cursor:pointer;transition:all .15s;"
+      onmouseover="this.style.borderColor='#c7cde8';this.style.color='#3d52d5'" onmouseout="this.style.borderColor='#eaecf4';this.style.color='#6b7494'">
+      <span class="material-symbols-rounded" style="font-size:17px;">print</span> Print Report
+    </button>
+  </div>
+
+ {{-- Cashier hero card --}}
+<div class="sr-print-header" style="background:white;border:1px solid #eaecf4;border-radius:14px;padding:20px 24px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+  <div style="display:flex;align-items:center;gap:14px;">
+    <div style="width:48px;height:48px;border-radius:50%;background:#eef1ff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#3d52d5;flex-shrink:0;">
+      {{ $initials }}
+    </div>
+    <div>
+      <div style="font-size:17px;font-weight:700;color:#0f1117;">{{ $shiftReport['cashier_name'] ?? Auth::user()->name }}</div>
+      <div style="font-size:12px;color:#9aa3c2;margin-top:3px;display:flex;align-items:center;gap:5px;">
+        <span class="material-symbols-rounded" style="font-size:14px;">schedule</span>
+        @if($shiftReport['shift_start'])
+          Shift started {{ $shiftReport['shift_start'] }}
+        @else
+          Logged in today
+        @endif
+      </div>
+    </div>
+  </div>
+  <div style="text-align:right;">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9aa3c2;margin-bottom:5px;">Total Collected</div>
+    <div style="font-size:30px;font-weight:900;color:#0f1117;letter-spacing:-.04em;font-family:'DM Mono',monospace;">
+      ₱{{ number_format($shiftReport['total_sales'] ?? 0, 2) }}
+    </div>
+  </div>
+</div>
+
+  {{-- Stat cards --}}
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+    <div class="sr-stat">
+      <div class="sr-stat-label">Transactions</div>
+      <div class="sr-stat-val">{{ $shiftReport['total_transactions'] ?? 0 }}</div>
+    </div>
+    <div class="sr-stat">
+      <div class="sr-stat-label">Voided</div>
+      <div class="sr-stat-val" style="{{ ($shiftReport['voided_count'] ?? 0) > 0 ? 'color:#dc2626;' : '' }}">
+        {{ $shiftReport['voided_count'] ?? 0 }}
+      </div>
+    </div>
+    <div class="sr-stat">
+      <div class="sr-stat-label">Discounts</div>
+      <div class="sr-stat-val" style="color:#d97706;">
+        {{ ($shiftReport['total_discount'] ?? 0) > 0 ? '— ' : '' }}₱{{ number_format($shiftReport['total_discount'] ?? 0, 0) }}
+      </div>
+    </div>
+    <div class="sr-stat">
+      <div class="sr-stat-label">VAT Collected</div>
+      <div class="sr-stat-val" style="color:#3d52d5;">₱{{ number_format($shiftReport['total_tax'] ?? 0, 0) }}</div>
+    </div>
+  </div>
+
+  {{-- Top Products --}}
+  @if(!empty($shiftReport['top_products']) && $shiftReport['top_products']->count() > 0)
+  @php
+    $maxQty = $shiftReport['top_products']->max('qty_sold');
+    $rankColors = [
+      ['bg'=>'#eef1ff','text'=>'#3d52d5','bar'=>'#3d52d5'],
+      ['bg'=>'#f0fdf4','text'=>'#15803d','bar'=>'#16a34a'],
+      ['bg'=>'#fefce8','text'=>'#854d0e','bar'=>'#d97706'],
+      ['bg'=>'#fef2f2','text'=>'#991b1b','bar'=>'#ef4444'],
+      ['bg'=>'#f5f3ff','text'=>'#6d28d9','bar'=>'#7c3aed'],
+    ];
+  @endphp
+  <div style="background:white;border:1px solid #eaecf4;border-radius:14px;padding:18px 20px;">
+    <div style="font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9aa3c2;margin-bottom:14px;">
+      Top products sold this shift
+    </div>
+    @foreach($shiftReport['top_products'] as $i => $prod)
+    @php $rc = $rankColors[$i] ?? $rankColors[4]; $pct = $maxQty > 0 ? round(($prod->qty_sold / $maxQty) * 100) : 0; @endphp
+    <div style="display:flex;align-items:center;gap:12px;padding:10px 0;{{ !$loop->last ? 'border-bottom:1px solid #f5f6fa;' : '' }}">
+      <div style="width:24px;height:24px;border-radius:6px;background:{{ $rc['bg'] }};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:{{ $rc['text'] }};flex-shrink:0;">
+        {{ $i + 1 }}
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;color:#0f1117;margin-bottom:6px;">{{ $prod->product_name }}</div>
+        <div class="prod-bar-track">
+          <div class="prod-bar-fill" style="width:{{ $pct }}%;background:{{ $rc['bar'] }};"></div>
         </div>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:#6b7494;white-space:nowrap;font-family:'DM Mono',monospace;min-width:54px;text-align:right;">
+        {{ number_format($prod->qty_sold) }} {{ $prod->qty_sold == 1 ? 'unit' : 'units' }}
+      </div>
+    </div>
+    @endforeach
+  </div>
+
+  @else
+  <div style="background:white;border:1.5px dashed #dde1ec;border-radius:14px;padding:48px;text-align:center;">
+    <span class="material-symbols-rounded" style="font-size:40px;color:#d4d8ea;display:block;margin-bottom:10px;">inventory_2</span>
+    <div style="font-size:13px;font-weight:700;color:#6b7494;">No sales yet this shift</div>
+    <div style="font-size:12px;color:#9aa3c2;margin-top:3px;">Top products will appear after completing transactions</div>
+  </div>
+  @endif
+
+</div>
          {{-- ══════════════════ SECTION: QUEUE / PICKUP ══════════════════ --}}
         <div class="section" id="section-queue">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
@@ -937,7 +1073,48 @@
   </div>
 </div>
 
+<div class="modal-ov" id="alertModal" style="display:none;background:rgba(15,23,42,.5);position:fixed;inset:0;align-items:center;justify-content:center;z-index:95;">
+  <div class="modal-box" style="max-width:500px;width:100%;background:white;border-radius:20px;padding:24px;position:relative;">
+    <button type="button" onclick="closeAlertModal()" style="position:absolute;top:18px;right:18px;width:34px;height:34px;border:none;border-radius:12px;background:#f3f4f6;color:#334155;cursor:pointer;font-size:18px;">×</button>
+    <div style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:10px;" id="alertModalTitle">Alert Admin</div>
+    <div style="font-size:13px;color:#64748b;margin-bottom:16px;" id="alertModalSku">SKU: —</div>
+    <textarea id="alertMessage" placeholder="Add an optional note for admin..." style="width:100%;min-height:120px;border:1px solid #e2e8f0;border-radius:14px;padding:14px;font-size:13px;color:#0f172a;resize:vertical;"></textarea>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+      <button type="button" onclick="closeAlertModal()" style="border:1px solid #cbd5e1;background:white;color:#334155;border-radius:10px;padding:11px 18px;font-weight:700;cursor:pointer;">Cancel</button>
+      <button type="button" id="alertSubmitBtn" onclick="submitAlert()" style="border:none;background:#16a34a;color:white;border-radius:10px;padding:11px 18px;font-weight:700;cursor:pointer;">Send Alert</button>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast"><span id="toastMsg"></span></div>
+
+<style>
+  .alert-row-btn {
+    transition: transform .12s ease, box-shadow .12s ease, background .12s ease, opacity .12s ease;
+  }
+  .alert-row-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 14px rgba(249,115,22,.18);
+    background: #fb923c;
+  }
+  .alert-row-btn:active,
+  .alert-row-btn.btn-clicked,
+  .alert-row-btn.sending {
+    transform: scale(0.96);
+    box-shadow: inset 0 2px 10px rgba(0,0,0,.18);
+  }
+  .alert-row-btn.alert-sent {
+    background: #10b981 !important;
+    cursor: default !important;
+    box-shadow: none !important;
+  }
+  .alert-row-btn.alert-sent:hover {
+    background: #0f766e !important;
+  }
+  .alert-row-btn:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+  }
+</style>
 
 {{-- ══ CHART.JS — place just before closing </body> tag ══ --}}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -960,7 +1137,8 @@
     var ROUTE_QUEUE_DONE  = "{{ route('cashier.queue.done') }}";
     var ROUTE_QUEUE_SKIP  = "{{ route('cashier.queue.skip') }}";
     var ROUTE_QUEUE_RESET = "{{ route('cashier.queue.reset') }}";
+    var ROUTE_ALERT_CREATE = "{{ route('cashier.alert.create') }}";
 </script>
-<script src="{{ asset('js/cashier.js') }}"></script>
+<script src="{{ asset('js/cashier.js') }}?v={{ filemtime(public_path('js/cashier.js')) }}"></script>
 </body>
 </html>
