@@ -7,7 +7,7 @@ function tick(){
 setInterval(tick,1000); tick();
 
 // ── SECTION SWITCH ──────────────────────────────────────────
-var TITLES={dashboard:'Dashboard',products:'Products',batches:'Batch Entry',suppliers:'Suppliers',invoices:'Invoice History',users:'Cashier Accounts','report-sales':'Sales Report','report-inventory':'Inventory Report','report-cashier':'Cashier Performance'};
+var TITLES={dashboard:'Dashboard',products:'Products',batches:'Batch Entry',suppliers:'Suppliers',alerts:'Stock Alerts',invoices:'Invoice History',users:'Cashier Accounts','report-sales':'Sales Report','report-inventory':'Inventory Report','report-cashier':'Cashier Performance'};
 function switchSection(name,btn){
   document.querySelectorAll('.section').forEach(function(s){s.classList.remove('active');});
   document.getElementById('section-'+name).classList.add('active');
@@ -38,6 +38,23 @@ function showToast(msg,type){
   t.className='toast show'+(type?' '+type:'');
   clearTimeout(_tt); _tt=setTimeout(function(){t.className='toast';},3500);
 }
+
+function resolveAlert(id){
+  if(!confirm('Resolve this alert?')) return;
+  fetch(R.alertResolve(id), { method:'POST', headers:{ 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' } })
+  .then(function(r){ return r.json(); })
+  .then(function(data){
+    if(data.success){
+      showToast('Alert resolved','success');
+      setTimeout(function(){ location.reload(); }, 300);
+    } else {
+      showToast(data.error||'Could not resolve alert','error');
+    }
+  })
+  .catch(function(){ showToast('Could not resolve alert','error'); });
+}
+
+window.resolveAlert = resolveAlert;
 
 // ── MODALS ──────────────────────────────────────────────────
 function closeModal(id){ document.getElementById(id).classList.remove('show'); }
@@ -112,7 +129,6 @@ function openProductModal(){
   openModal('productModal');
 }
 
-// ── FIXED: editProduct takes just the ID now ─────────────
 function editProduct(id){
   fetch(R.prodShow(id),{headers:{'X-CSRF-TOKEN':CSRF,'Accept':'application/json'}})
   .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
@@ -135,7 +151,6 @@ function editProduct(id){
     document.getElementById('pRequiresRx').checked = !!parseInt(p.requires_rx);
     document.getElementById('pDesc').value       = p.description||'';
     document.getElementById('pUsage').value      = p.usage_recommendation||'';
-    // Image preview — use the image route if product has one
     var prev=document.getElementById('pImagePreview');
     if(p.has_image){
       prev.src=R.prodImage(p.id)+'?t='+Date.now();
@@ -187,7 +202,6 @@ document.getElementById('productForm').addEventListener('submit',function(e){
   .catch(function(){ btn.disabled=false; btn.innerHTML='<span class="material-symbols-rounded" style="font-size:17px;">save</span>Save Product'; showToast('Network error','error'); });
 });
 
-// ── FIXED: toggleProduct ─────────────────────────────────
 function toggleProduct(id,isCurrentlyActive){
   var action=isCurrentlyActive?'disable':'enable';
   if(!confirm('Are you sure you want to '+action+' this product?')) return;
@@ -383,6 +397,10 @@ document.getElementById('supplierForm').addEventListener('submit',function(e){
 // ════════════════════════════════════════════
 //  INVOICES
 // ════════════════════════════════════════════
+
+// Cache: stores items per invoice id so View Items is instant after first load
+var _invItemsCache = {};
+
 var invPage=1,invTotal=0,invPerPage=25;
 function loadInvoices(page){
   invPage=page||1;
@@ -397,9 +415,18 @@ function loadInvoices(page){
     invTotal=res.total; invPerPage=res.per_page;
     var tb=document.getElementById('invTableBody');
     var rows=res.data;
-    if(!rows.length){ tb.innerHTML='<tr><td colspan="10"><div class="empty-state"><span class="material-symbols-rounded">receipt_long</span><p>No invoices found</p></div></td></tr>'; document.getElementById('invPagination').style.display='none'; return; }
+    if(!rows.length){
+      tb.innerHTML='<tr><td colspan="10"><div class="empty-state"><span class="material-symbols-rounded">receipt_long</span><p>No invoices found</p></div></td></tr>';
+      document.getElementById('invPagination').style.display='none';
+      return;
+    }
     var SC={paid:'badge-paid',voided:'badge-voided',draft:'badge-draft',issued:'badge-draft'};
     tb.innerHTML=rows.map(function(inv){
+      // If the server returns items embedded, cache them immediately so the
+      // modal opens instantly without any extra network request.
+      if(inv.items && inv.items.length){
+        _invItemsCache[inv.id] = inv.items;
+      }
       return '<tr>'+
         '<td style="font-family:\'DM Mono\',monospace;font-size:11.5px;font-weight:500;">'+escH(inv.invoice_number)+'</td>'+
         '<td style="color:#9aa3c2;font-size:12px;">'+escH(inv.invoice_date?inv.invoice_date.slice(0,10):'')+'</td>'+
@@ -453,34 +480,60 @@ function submitVoidInvoice(){
   });
 }
 
-function viewInvItems(id,num){
-  document.getElementById('invItemsTitle').textContent='Items — '+num;
-  document.getElementById('invItemsTbody').innerHTML='<tr><td colspan="9" style="text-align:center;padding:20px;color:#9aa3c2;">Loading…</td></tr>';
+// ── FIX: View Items uses cache — opens instantly on repeat clicks ────────────
+function viewInvItems(id, num){
+  document.getElementById('invItemsTitle').textContent = 'Items — ' + num;
   openModal('invItemsModal');
+
+  // Helper: render rows into the modal table
+  function renderItems(items){
+    document.getElementById('invItemsTbody').innerHTML = items.length
+      ? items.map(function(i){
+          return '<tr>'+
+            '<td style="font-weight:600;font-size:13px;">'+escH(i.product_name)+'</td>'+
+            '<td style="color:#9aa3c2;font-size:12px;">'+escH(i.generic_name||'—')+'</td>'+
+            '<td style="color:#9aa3c2;font-size:12px;">'+escH(i.uom_code||'PC')+'</td>'+
+            '<td style="font-weight:700;">'+parseFloat(i.quantity).toFixed(0)+'</td>'+
+            '<td>₱'+parseFloat(i.unit_price).toFixed(2)+'</td>'+
+            '<td style="color:#9aa3c2;">'+parseFloat(i.tax_rate_pct).toFixed(1)+'%</td>'+
+            '<td>₱'+parseFloat(i.line_subtotal).toFixed(2)+'</td>'+
+            '<td>₱'+parseFloat(i.line_tax).toFixed(2)+'</td>'+
+            '<td style="font-weight:700;">₱'+parseFloat(i.line_total).toFixed(2)+'</td>'+
+          '</tr>';
+        }).join('')
+      : '<tr><td colspan="9" style="text-align:center;padding:20px;color:#9aa3c2;">No items found</td></tr>';
+  }
+
+  // Already fetched before? Show instantly, no spinner, no request.
+  if(_invItemsCache[id]){
+    renderItems(_invItemsCache[id]);
+    return;
+  }
+
+  // First time: show spinner, fetch, then cache so next click is instant.
+  document.getElementById('invItemsTbody').innerHTML =
+    '<tr><td colspan="9" style="text-align:center;padding:20px;color:#9aa3c2;"><span class="material-symbols-rounded spin">refresh</span></td></tr>';
+
   fetch(R.invItems(id),{headers:{'X-CSRF-TOKEN':CSRF,'Accept':'application/json'}})
-  .then(function(r){return r.json();})
+  .then(function(r){ return r.json(); })
   .then(function(items){
-    document.getElementById('invItemsTbody').innerHTML=items.map(function(i){
-      return '<tr>'+
-        '<td style="font-weight:600;font-size:13px;">'+escH(i.product_name)+'</td>'+
-        '<td style="color:#9aa3c2;font-size:12px;">'+escH(i.generic_name||'—')+'</td>'+
-        '<td style="color:#9aa3c2;font-size:12px;">'+escH(i.uom_code||'PC')+'</td>'+
-        '<td style="font-weight:700;">'+parseFloat(i.quantity).toFixed(0)+'</td>'+
-        '<td>₱'+parseFloat(i.unit_price).toFixed(2)+'</td>'+
-        '<td style="color:#9aa3c2;">'+parseFloat(i.tax_rate_pct).toFixed(1)+'%</td>'+
-        '<td>₱'+parseFloat(i.line_subtotal).toFixed(2)+'</td>'+
-        '<td>₱'+parseFloat(i.line_tax).toFixed(2)+'</td>'+
-        '<td style="font-weight:700;">₱'+parseFloat(i.line_total).toFixed(2)+'</td>'+
-      '</tr>';
-    }).join('');
-  });
+    _invItemsCache[id] = items;   // cache it — next open is instant
+    renderItems(items);
+  })
+  .catch(function(){ showToast('Failed to load items','error'); });
 }
 
+// ── FIX: Export CSV now includes the search query so it matches what's on screen ──
 function exportInvoicesCSV(){
-  var st=document.getElementById('invStatusFilter').value;
-  var df=document.getElementById('invDateFrom').value;
-  var dt=document.getElementById('invDateTo').value;
-  window.location=R.invExport+'?status='+st+'&date_from='+df+'&date_to='+dt;
+  var q  = document.getElementById('invSearch').value;
+  var st = document.getElementById('invStatusFilter').value;
+  var df = document.getElementById('invDateFrom').value;
+  var dt = document.getElementById('invDateTo').value;
+  window.location = R.invExport
+    + '?q='         + encodeURIComponent(q)
+    + '&status='    + encodeURIComponent(st)
+    + '&date_from=' + encodeURIComponent(df)
+    + '&date_to='   + encodeURIComponent(dt);
 }
 
 // ════════════════════════════════════════════
@@ -576,18 +629,20 @@ function viewCashierDashboard(){
 // ════════════════════════════════════════════
 //  REPORTS
 // ════════════════════════════════════════════
- 
+
 var _reportTrendChart = null;
 var _reportPayChart   = null;
-
+ 
 function loadSalesReport(){
+  var BAR_COLORS = ['#3d52d5','#16a34a','#d97706','#e11d48','#0891b2','#7c3aed','#ea580c','#0f766e','#db2777','#ca8a04'];
   var df = document.getElementById('reportSalesFromDate').value;
   var dt = document.getElementById('reportSalesToDate').value;
   if(!df || !dt){ showToast('Please select both From and To dates','warning'); return; }
 
   document.getElementById('reportDateRange').textContent = 'Loading…';
+  document.getElementById('reportEmptyState').style.display = 'none';
   ['reportTotalInvoices','reportTotalRevenue','reportAOV','reportVoided']
-    .forEach(function(id){ document.getElementById(id).textContent='…'; });
+    .forEach(function(id){ document.getElementById(id).textContent = '…'; });
 
   fetch(R.invoices+'?date_from='+df+'&date_to='+dt+'&page=1',{
     headers:{'X-CSRF-TOKEN':CSRF,'Accept':'application/json'}
@@ -601,53 +656,101 @@ function loadSalesReport(){
     var aov     = paid.length ? revenue/paid.length : 0;
 
     document.getElementById('reportTotalInvoices').textContent = paid.length;
-    document.getElementById('reportTotalRevenue').textContent  = '₱'+revenue.toFixed(2);
-    document.getElementById('reportAOV').textContent           = '₱'+aov.toFixed(2);
+    document.getElementById('reportTotalRevenue').textContent  = '₱'+revenue.toLocaleString('en-PH',{minimumFractionDigits:2});
+    document.getElementById('reportAOV').textContent           = '₱'+aov.toLocaleString('en-PH',{minimumFractionDigits:2});
     document.getElementById('reportVoided').textContent        = voided.length;
-    document.getElementById('reportDateRange').textContent     = paid.length+' paid invoice(s) from '+df+' to '+dt;
+    document.getElementById('reportDateRange').textContent     = paid.length+' paid · '+df+' → '+dt;
 
-    // ── Trend Chart ──
-    var byDate={};
-    paid.forEach(function(i){
-      var d=i.invoice_date?i.invoice_date.slice(0,10):'?';
-      byDate[d]=(byDate[d]||0)+(parseFloat(i.grand_total)||0);
-    });
-    var tLabels=Object.keys(byDate).sort();
-    var tData=tLabels.map(function(d){ return byDate[d]; });
+    document.getElementById('reportChartsRow').style.display = 'grid';
+    document.getElementById('reportBottomRow').style.display = 'grid';
+    document.getElementById('reportEmptyState').style.display = 'none';
 
-    if(_reportTrendChart) _reportTrendChart.destroy();
-    var tCtx=document.getElementById('reportTrendChart');
-    if(tCtx){
-      _reportTrendChart=new Chart(tCtx,{
-        type:'bar',
-        data:{
-          labels:tLabels,
-          datasets:[{
-            label:'Revenue',data:tData,
-            backgroundColor:'rgba(61,82,213,0.15)',
-            borderColor:'#3d52d5',borderWidth:2,
-            borderRadius:8,borderSkipped:false,
-            hoverBackgroundColor:'rgba(61,82,213,0.3)',
-            barPercentage: 0.4,     
-            categoryPercentage: 0.6,   
-          }]
+   // ── Revenue Trend ──
+var byDate = {};
+paid.forEach(function(i){
+  var d = i.invoice_date ? i.invoice_date.slice(0,10) : '?';
+  byDate[d] = (byDate[d] || 0) + (parseFloat(i.grand_total) || 0);
+});
+
+// Build a full date range (every day from df to dt, no gaps)
+var tLabels = [], tData = [], tRawKeys = [];
+var cur = new Date(df);
+var end = new Date(dt);
+while(cur <= end){
+  var key = cur.toISOString().slice(0,10);
+  tRawKeys.push(key);
+  tLabels.push(cur.toLocaleDateString('en-PH', {month:'short', day:'numeric'}));
+  tData.push(byDate[key] || 0);
+  cur.setDate(cur.getDate() + 1);
+}
+
+document.getElementById('reportTrendSubtitle').textContent =
+  '₱' + tData.reduce(function(a,b){ return a+b; }, 0)
+        .toLocaleString('en-PH', {minimumFractionDigits:2}) + ' total';
+
+// Reset the wrapper — no horizontal scroll needed for a line chart
+var wrap = document.getElementById('reportTrendWrap');
+wrap.style.overflowX = 'hidden';
+
+if(_reportTrendChart) _reportTrendChart.destroy();
+var tCtx = document.getElementById('reportTrendChart');
+if(tCtx){
+  tCtx.style.width  = '';   // let Chart.js handle sizing
+  tCtx.style.height = '160px';
+
+  _reportTrendChart = new Chart(tCtx, {
+    type: 'line',
+    data: {
+      labels: tLabels,
+      datasets: [{
+        data: tData,
+        borderColor: '#3d52d5',
+        borderWidth: 2,
+        backgroundColor: 'rgba(61,82,213,0.06)',
+        fill: true,
+        tension: 0.4,
+        pointBackgroundColor: '#3d52d5',
+        pointBorderColor: '#ffffff',
+        pointBorderWidth: 2,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0f1117',
+          titleFont: { size: 10, weight: '700' },
+          bodyFont: { size: 12 },
+          padding: 10,
+          cornerRadius: 6,
+          callbacks: { label: function(ctx){
+            return ' ₱' + ctx.parsed.y.toLocaleString('en-PH', {minimumFractionDigits:2});
+          }}
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          border: { display: false },
+          ticks: { font: { size: 10, weight: '600' }, color: '#b0b8d4', maxRotation: 0 }
         },
-        options:{
-          responsive:true,maintainAspectRatio:false,
-          plugins:{legend:{display:false},tooltip:{
-            callbacks:{label:function(ctx){ return ' ₱'+ctx.parsed.y.toLocaleString('en-PH',{minimumFractionDigits:2}); }}
-          }},
-          scales:{
-            x:{grid:{display:false},border:{display:false},
-               ticks:{font:{size:11},color:'#9aa3c2'}},
-            y:{grid:{color:'rgba(0,0,0,0.04)'},border:{display:false},
-               ticks:{callback:function(v){ return v>=1000?'₱'+(v/1000).toFixed(1)+'k':'₱'+v; },color:'#9aa3c2'}}
+        y: {
+          grid: { color: 'rgba(0,0,0,0.04)' },
+          border: { display: false },
+          ticks: {
+            font: { size: 10 }, color: '#b0b8d4',
+            callback: function(v){ return v >= 1000 ? '₱'+(v/1000).toFixed(1)+'k' : '₱'+v; }
           }
         }
-      });
+      }
     }
-
-    // ── Payment Donut ──
+  });
+}
+    // ── Payment Mix Donut ──
     var byPay={};
     paid.forEach(function(i){
       var m=i.payment_method||'Unknown';
@@ -655,7 +758,6 @@ function loadSalesReport(){
     });
     var pLabels=Object.keys(byPay);
     var pTotals=pLabels.map(function(k){ return byPay[k]; });
-    var COLORS=['#3d52d5','#16a34a','#d97706','#e11d48','#0891b2','#7c3aed'];
     var grand=pTotals.reduce(function(a,b){ return a+b; },0);
 
     if(_reportPayChart) _reportPayChart.destroy();
@@ -663,65 +765,87 @@ function loadSalesReport(){
     if(pCtx && pLabels.length){
       _reportPayChart=new Chart(pCtx,{
         type:'doughnut',
-        data:{labels:pLabels,datasets:[{
-          data:pTotals,
-          backgroundColor:COLORS.slice(0,pLabels.length),
-          borderWidth:3,borderColor:'#ffffff',hoverOffset:6
-        }]},
-        options:{responsive:true,maintainAspectRatio:false,cutout:'70%',
-                 plugins:{legend:{display:false},tooltip:{
-                   callbacks:{label:function(ctx){
-                     var pct=grand>0?((ctx.parsed/grand)*100).toFixed(1):0;
-                     return ' ₱'+ctx.parsed.toLocaleString('en-PH',{minimumFractionDigits:2})+' ('+pct+'%)';
-                   }}
-                 }}}
+        data:{
+          labels:pLabels,
+          datasets:[{
+            data:pTotals,
+            backgroundColor:BAR_COLORS.slice(0,pLabels.length),
+            borderWidth:3,borderColor:'#ffffff',hoverOffset:4
+          }]
+        },
+        options:{
+          responsive:true,maintainAspectRatio:false,cutout:'70%',
+          plugins:{
+            legend:{ display:false },
+            tooltip:{
+              backgroundColor:'#0f1117',
+              callbacks:{ label:function(ctx){
+                var pct=grand>0?((ctx.parsed/grand)*100).toFixed(1):0;
+                return ' ₱'+ctx.parsed.toLocaleString('en-PH',{minimumFractionDigits:2})+' ('+pct+'%)';
+              }}
+            }
+          }
+        }
       });
       document.getElementById('reportPayLegend').innerHTML=pLabels.map(function(lbl,i){
         var pct=grand>0?((pTotals[i]/grand)*100).toFixed(1):0;
-        return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;">'+
-          '<div style="width:9px;height:9px;border-radius:2px;background:'+COLORS[i]+';flex-shrink:0;"></div>'+
-          '<span style="color:#6b7494;flex:1;">'+escH(lbl)+'</span>'+
-          '<span style="font-weight:600;color:#1a1d2e;">'+pct+'%</span></div>';
+        return '<div style="display:flex;align-items:center;gap:6px;">'+
+          '<div style="width:8px;height:8px;border-radius:2px;background:'+BAR_COLORS[i]+';flex-shrink:0;"></div>'+
+          '<span style="font-size:11px;color:#6b7494;flex:1;">'+escH(lbl)+'</span>'+
+          '<span style="font-size:11px;font-weight:800;color:#0f1117;">'+pct+'%</span></div>';
       }).join('');
     }
 
-    // ── Top Products — use server-side aggregated top products ──
+    // ── Top Products ──
     var topProducts = res.top_products || [];
-    if (!topProducts || !topProducts.length) {
-      document.getElementById('reportTopProdsTbody').innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#9aa3c2;">No product data available</td></tr>';
+    var tpContainer = document.getElementById('reportTopProdsTbody');
+    if(!topProducts.length){
+      tpContainer.innerHTML = '<div style="padding:20px;text-align:center;color:#9aa3c2;font-size:12px;">No product data</div>';
     } else {
-      document.getElementById('reportTopProdsTbody').innerHTML = topProducts.map(function(p,i){
-        return '<tr>'+ 
-          '<td style="color:#9aa3c2;font-weight:700;">'+(i+1)+'</td>'+ 
-          '<td style="font-weight:600;">'+escH(p.product_name)+'</td>'+ 
-          '<td><span style="background:#eef1ff;color:#3d52d5;font-weight:700;padding:3px 10px;border-radius:8px;font-size:12px;">'+(parseFloat(p.qty_sold)||0).toFixed(0)+' units</span></td>'+ 
-          '<td style="font-weight:700;color:#16a34a;">₱'+(parseFloat(p.revenue)||0).toFixed(2)+'</td>'+ 
-        '</tr>';
+      var maxRev = Math.max.apply(null, topProducts.map(function(p){ return parseFloat(p.revenue)||0; }));
+      var RANK_COLORS = ['#3d52d5','#16a34a','#d97706','#e11d48','#7c3aed'];
+      tpContainer.innerHTML = topProducts.map(function(p,i){
+        var rev = parseFloat(p.revenue)||0;
+        var pct = maxRev > 0 ? Math.round((rev/maxRev)*100) : 0;
+        var rc  = RANK_COLORS[i] || '#c4c9dd';
+        return '<div style="padding:9px 16px;border-bottom:1px solid #f5f6fa;">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">'+
+            '<div style="display:flex;align-items:center;gap:8px;">'+
+              '<span style="display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:4px;background:'+rc+';font-size:9px;font-weight:900;color:#fff;flex-shrink:0;font-family:monospace;">'+(i+1)+'</span>'+
+              '<span style="font-size:12px;font-weight:600;color:#0f1117;">'+escH(p.product_name)+'</span>'+
+            '</div>'+
+            '<span style="font-size:11px;font-weight:800;color:#16a34a;font-variant-numeric:tabular-nums;">₱'+rev.toLocaleString('en-PH',{minimumFractionDigits:2})+'</span>'+
+          '</div>'+
+          '<div style="display:flex;align-items:center;gap:8px;">'+
+            '<div style="flex:1;height:3px;background:#f0f2f8;border-radius:4px;">'+
+              '<div style="width:'+pct+'%;height:3px;background:'+rc+';border-radius:4px;transition:width 0.6s ease;"></div>'+
+            '</div>'+
+            '<span style="font-size:10px;color:#9aa3c2;white-space:nowrap;font-variant-numeric:tabular-nums;">'+(parseFloat(p.qty_sold)||0).toFixed(0)+' units</span>'+
+          '</div>'+
+        '</div>';
       }).join('');
     }
-    // ── Transactions Table ──
-    document.getElementById('reportInvTableTitle').textContent='Transactions ('+rows.length+')';
-    var SC={paid:'badge-paid',voided:'badge-voided',draft:'badge-draft',issued:'badge-draft'};
-    document.getElementById('reportInvTbody').innerHTML=rows.map(function(inv){
-      return '<tr>'+
-        '<td style="font-family:\'DM Mono\',monospace;font-size:11px;">'+escH(inv.invoice_number)+'</td>'+
-        '<td style="color:#9aa3c2;font-size:12px;">'+(inv.invoice_date?inv.invoice_date.slice(0,10):'')+'</td>'+
-        '<td style="font-weight:600;">'+escH(inv.customer_name||'Walk-in')+'</td>'+
-        '<td style="color:#6b7494;font-size:12px;">'+escH(inv.cashier_name||'—')+'</td>'+
-        '<td style="color:#6b7494;font-size:12px;">'+escH(inv.payment_method||'—')+'</td>'+
-        '<td style="font-weight:700;">₱'+parseFloat(inv.grand_total).toFixed(2)+'</td>'+
-        '<td><span class="badge '+(SC[inv.status]||'badge-draft')+'">'+inv.status.charAt(0).toUpperCase()+inv.status.slice(1)+'</span></td>'+
-      '</tr>';
-    }).join('');
 
-    // Show sections
-    document.getElementById('reportChartsRow').style.display    = 'grid';
-    document.getElementById('reportTopProdsWrap').style.display = 'block';
-    document.getElementById('reportInvTableWrap').style.display = 'block';
+    // ── Transactions Table ──
+    document.getElementById('reportInvTableTitle').textContent = 'Transactions ('+rows.length+')';
+    var SC={paid:'badge-paid',voided:'badge-voided',draft:'badge-draft',issued:'badge-draft'};
+    document.getElementById('reportInvTbody').innerHTML = rows.length
+      ? rows.map(function(inv){
+          return '<tr>'+
+            '<td style="font-family:\'DM Mono\',monospace;font-size:11px;font-weight:600;color:#3d52d5;">'+escH(inv.invoice_number)+'</td>'+
+            '<td style="color:#9aa3c2;font-size:11px;font-variant-numeric:tabular-nums;">'+(inv.invoice_date?inv.invoice_date.slice(0,10):'')+'</td>'+
+            '<td style="font-weight:600;font-size:12px;color:#0f1117;">'+escH(inv.customer_name||'Walk-in')+'</td>'+
+            '<td style="color:#6b7494;font-size:11.5px;">'+escH(inv.cashier_name||'—')+'</td>'+
+            '<td style="color:#6b7494;font-size:11.5px;">'+escH(inv.payment_method||'—')+'</td>'+
+            '<td style="font-weight:800;font-size:12.5px;color:#0f1117;font-variant-numeric:tabular-nums;">₱'+parseFloat(inv.grand_total).toFixed(2)+'</td>'+
+            '<td><span class="badge '+(SC[inv.status]||'badge-draft')+'">'+inv.status.charAt(0).toUpperCase()+inv.status.slice(1)+'</span></td>'+
+          '</tr>';
+        }).join('')
+      : '<tr><td colspan="7" class="empty-state"><span class="material-symbols-rounded">receipt_long</span><p>No transactions in this period</p></td></tr>';
   })
   .catch(function(err){
-    console.error('Report error:',err);
     showToast('Failed to generate report: '+err.message,'error');
+    document.getElementById('reportEmptyState').style.display = 'block';
   });
 }
 
@@ -730,55 +854,280 @@ function exportSalesReportCSV(){
   var dt=document.getElementById('reportSalesToDate').value;
   window.location=R.invExport+'?status=paid&date_from='+df+'&date_to='+dt;
 }
-function loadInventoryReport(){
-    document.getElementById('reportTotalProducts').textContent = STATS.total_products;
-    document.getElementById('reportLowStock').textContent      = STATS.low_stock;
-    document.getElementById('reportExpiring').textContent      = STATS.expiring_30;
-    document.getElementById('reportTotalSuppliers').textContent = STATS.total_suppliers;
-}
 
-function loadCashierPerformanceReport(){
-  fetch(R.users,{headers:{'X-CSRF-TOKEN':CSRF,'Accept':'application/json'}})
-  .then(function(r){return r.json();})
-  .then(function(users){
-    var cashiers=users.filter(function(u){ return u.role_name==='cashier'; });
-    var tb=document.getElementById('cashierPerfTableBody');
-    if(!cashiers.length){ tb.innerHTML='<tr><td colspan="7"><div class="empty-state"><span class="material-symbols-rounded">people</span><p>No cashiers found</p></div></td></tr>'; return; }
-    fetch(R.invoices+'?page=1',{headers:{'X-CSRF-TOKEN':CSRF,'Accept':'application/json'}})
-    .then(function(r){return r.json();})
-    .then(function(invoiceRes){
-      var allInvoices=invoiceRes.data||[];
-      var today=new Date().toISOString().slice(0,10);
-      var thisMonth=new Date().toISOString().substring(0,7);
-      tb.innerHTML=cashiers.map(function(c){
-        var ci=allInvoices.filter(function(i){ return i.cashier_id==c.id; });
-        var todayInv=ci.filter(function(i){ return i.invoice_date&&i.invoice_date.slice(0,10)===today&&i.status!=='voided'; });
-        var todayRev=todayInv.reduce(function(s,i){ return s+(parseFloat(i.grand_total)||0); },0);
-        var monthInv=ci.filter(function(i){ return i.invoice_date&&i.invoice_date.substring(0,7)===thisMonth&&i.status!=='voided'; });
-        var monthRev=monthInv.reduce(function(s,i){ return s+(parseFloat(i.grand_total)||0); },0);
-        var voided=ci.filter(function(i){ return i.status==='voided'; }).length;
+function loadInventoryReport(){
+  // KPI cards from server stats
+  document.getElementById('reportTotalProducts').textContent  = STATS.total_products;
+  document.getElementById('reportLowStock').textContent       = STATS.low_stock;
+  document.getElementById('reportExpiring').textContent       = STATS.expiring_30;
+  document.getElementById('reportTotalSuppliers').textContent = STATS.total_suppliers;
+
+  // ── Low Stock Products ──
+  fetch(R.products + '?status=1', { headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' } })
+  .then(function(r){ return r.json(); })
+  .then(function(products){
+    var lowStock = products.filter(function(p){
+      return parseInt(p.stock_quantity) <= parseInt(p.reorder_level);
+    }).sort(function(a,b){ return a.stock_quantity - b.stock_quantity; });
+
+    // Badge
+    document.getElementById('invLowStockBadge').textContent = lowStock.length + ' items';
+
+    // Low stock table
+    var lb = document.getElementById('invLowStockBody');
+    if(!lowStock.length){
+      lb.innerHTML = '<tr><td colspan="4"><div class="empty-state"><span class="material-symbols-rounded">check_circle</span><p>All products sufficiently stocked</p></div></td></tr>';
+    } else {
+      lb.innerHTML = lowStock.map(function(p){
+        var pct = p.reorder_level > 0 ? Math.round((p.stock_quantity / p.reorder_level) * 100) : 0;
+        var barColor = p.stock_quantity === 0 ? '#dc2626' : (pct <= 50 ? '#d97706' : '#16a34a');
         return '<tr>'+
-          '<td style="font-weight:600;font-size:13px;">'+escH(c.name)+'</td>'+
-          '<td style="text-align:center;">'+todayInv.length+'</td>'+
-          '<td style="color:#16a34a;font-weight:600;">₱'+todayRev.toFixed(2)+'</td>'+
-          '<td style="text-align:center;">'+monthInv.length+'</td>'+
-          '<td style="color:#16a34a;font-weight:600;">₱'+monthRev.toFixed(2)+'</td>'+
-          '<td style="text-align:center;color:#dc2626;font-weight:600;">'+voided+'</td>'+
-          '<td><button class="btn-sm blue" onclick="window.location.href=R.cashierView('+c.id+')"><span class="material-symbols-rounded">visibility</span>View</button></td>'+
+          '<td><div style="font-weight:600;color:#1a1d2e;font-size:12.5px;">'+escH(p.product_name)+'</div>'+
+            '<div style="width:100%;background:#f0f2f8;border-radius:4px;height:4px;margin-top:5px;">'+
+              '<div style="width:'+Math.min(pct,100)+'%;background:'+barColor+';height:4px;border-radius:4px;transition:width .3s;"></div>'+
+            '</div></td>'+
+          '<td style="font-family:\'DM Mono\',monospace;font-size:11px;color:#9aa3c2;">'+escH(p.sku)+'</td>'+
+          '<td style="font-weight:800;color:'+(p.stock_quantity===0?'#dc2626':'#d97706')+';">'+p.stock_quantity+'</td>'+
+          '<td style="color:#9aa3c2;font-size:12px;">'+p.reorder_level+'</td>'+
         '</tr>';
       }).join('');
+    }
+
+    // ── Full Stock List ──
+    document.getElementById('invStockListCount').textContent = products.length + ' products';
+    var fb = document.getElementById('invFullStockBody');
+    if(!products.length){
+      fb.innerHTML = '<tr><td colspan="8"><div class="empty-state"><span class="material-symbols-rounded">medication_liquid</span><p>No products found</p></div></td></tr>';
+    } else {
+      fb.innerHTML = products.map(function(p){
+        var stockColor = p.stock_quantity === 0 ? '#dc2626' : (parseInt(p.stock_quantity) <= parseInt(p.reorder_level) ? '#d97706' : '#16a34a');
+        var isLow = parseInt(p.stock_quantity) <= parseInt(p.reorder_level);
+        return '<tr>'+
+          '<td><div style="font-weight:600;color:#1a1d2e;font-size:13px;">'+escH(p.product_name)+'</div>'+
+            '<div style="font-size:11px;color:#9aa3c2;">'+escH(p.generic_name||'')+'</div></td>'+
+          '<td style="font-family:\'DM Mono\',monospace;font-size:11px;color:#9aa3c2;">'+escH(p.sku)+'</td>'+
+          '<td style="font-size:12px;color:#6b7494;">'+escH(p.category_name||'—')+'</td>'+
+          '<td><span style="font-weight:800;color:'+stockColor+';">'+p.stock_quantity+'</span>'+
+            (isLow ? '<span style="margin-left:6px;font-size:9px;font-weight:700;background:'+(p.stock_quantity===0?'#fef2f2':'#fffbeb')+';color:'+(p.stock_quantity===0?'#dc2626':'#92400e')+';padding:1px 6px;border-radius:10px;">'+(p.stock_quantity===0?'OUT':'LOW')+'</span>' : '')+
+          '</td>'+
+          '<td style="color:#9aa3c2;font-size:12px;">'+p.reorder_level+'</td>'+
+          '<td style="color:#6b7494;font-size:12px;">₱'+parseFloat(p.cost_price).toFixed(2)+'</td>'+
+          '<td style="font-weight:600;font-size:13px;">₱'+parseFloat(p.selling_price).toFixed(2)+'</td>'+
+          '<td><span class="badge '+(parseInt(p.is_active)?'badge-active':'badge-inactive')+'">'+(parseInt(p.is_active)?'Active':'Inactive')+'</span></td>'+
+        '</tr>';
+      }).join('');
+    }
+  })
+  .catch(function(){ showToast('Failed to load stock data','error'); });
+
+  // ── Expiring Batches ──
+  fetch(R.batches, { headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' } })
+  .then(function(r){ return r.json(); })
+  .then(function(batches){
+    var now = new Date();
+    var expiring = batches.filter(function(b){
+      var days = Math.round((new Date(b.expiry_date) - now) / (1000*60*60*24));
+      return days <= 30;
+    }).sort(function(a,b){ return new Date(a.expiry_date) - new Date(b.expiry_date); });
+
+    document.getElementById('invExpiringBadge').textContent = expiring.length + ' batches';
+
+    var eb = document.getElementById('invExpiringBody');
+    if(!expiring.length){
+      eb.innerHTML = '<tr><td colspan="5"><div class="empty-state"><span class="material-symbols-rounded">check_circle</span><p>No batches expiring in 30 days</p></div></td></tr>';
+    } else {
+      eb.innerHTML = expiring.map(function(b){
+        var days = Math.round((new Date(b.expiry_date) - now) / (1000*60*60*24));
+        var dColor = days < 0 ? '#dc2626' : (days <= 7 ? '#dc2626' : (days <= 14 ? '#d97706' : '#92400e'));
+        var dBg    = days < 0 ? '#fef2f2' : (days <= 7 ? '#fef2f2' : '#fffbeb');
+        var dText  = days < 0 ? 'EXPIRED' : days + 'd';
+        return '<tr>'+
+          '<td style="font-weight:600;font-size:12.5px;color:#1a1d2e;">'+escH(b.product_name)+'</td>'+
+          '<td style="font-family:\'DM Mono\',monospace;font-size:11px;color:#9aa3c2;">'+escH(b.batch_number)+'</td>'+
+          '<td style="font-family:\'DM Mono\',monospace;font-size:11px;font-weight:600;">'+b.expiry_date+'</td>'+
+          '<td><span style="font-size:10px;font-weight:800;background:'+dBg+';color:'+dColor+';padding:2px 7px;border-radius:10px;">'+dText+'</span></td>'+
+          '<td style="font-weight:700;">'+parseFloat(b.quantity).toFixed(0)+'</td>'+
+        '</tr>';
+      }).join('');
+    }
+  })
+  .catch(function(){ showToast('Failed to load batch data','error'); });
+}
+
+var _cpActiveId = null;
+var _cpCharts   = {};
+
+function loadCashierPerformanceReport() {
+  fetch(R.users, { headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' } })
+  .then(function(r) { return r.json(); })
+  .then(function(users) {
+    var cashiers = users.filter(function(u) { return u.role_name === 'cashier'; });
+    if (!cashiers.length) {
+      document.getElementById('cashierCardsGrid').innerHTML =
+        '<div class="empty-state"><span class="material-symbols-rounded">people</span><p>No cashiers found</p></div>';
+      return;
+    }
+    fetch(R.invoices + '?page=1', { headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' } })
+    .then(function(r) { return r.json(); })
+    .then(function(invoiceRes) {
+      var allInvoices = invoiceRes.data || [];
+      var today      = new Date().toISOString().slice(0, 10);
+      var thisMonth  = new Date().toISOString().substring(0, 7);
+
+      var data = cashiers.map(function(c) {
+        var ci       = allInvoices.filter(function(i) { return i.cashier_id == c.id; });
+        var todayPaid  = ci.filter(function(i) { return i.invoice_date && i.invoice_date.slice(0,10) === today && i.status !== 'voided'; });
+        var todayRev   = todayPaid.reduce(function(s, i) { return s + (parseFloat(i.grand_total) || 0); }, 0);
+        var monthPaid  = ci.filter(function(i) { return i.invoice_date && i.invoice_date.substring(0,7) === thisMonth && i.status !== 'voided'; });
+        var monthRev   = monthPaid.reduce(function(s, i) { return s + (parseFloat(i.grand_total) || 0); }, 0);
+        var voided     = ci.filter(function(i) { return i.status === 'voided'; }).length;
+        var recentTxns = ci.slice(0, 5);
+
+        // Build 7-day trend
+        var trendMap = {};
+        for (var d = 6; d >= 0; d--) {
+          var dd = new Date(); dd.setDate(dd.getDate() - d);
+          trendMap[dd.toISOString().slice(0,10)] = 0;
+        }
+        ci.filter(function(i){ return i.status !== 'voided'; }).forEach(function(i) {
+          var k = i.invoice_date ? i.invoice_date.slice(0,10) : '';
+          if (trendMap[k] !== undefined) trendMap[k] += parseFloat(i.grand_total) || 0;
+        });
+
+        return { cashier: c, todayInvoices: todayPaid.length, todayRev, monthInvoices: monthPaid.length, monthRev, voided, recentTxns, trend: Object.values(trendMap) };
+      });
+
+      renderCashierCards(data);
     });
   });
 }
 
-// ── INIT ───────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded',function(){
-  loadProducts();
-  loadBatches();
-  loadProductsForSelect();
-  loadSuppliers();
-  loadInvoices();
-  loadUsers();
-  loadCashierSelector();
-  loadInventoryReport();
+function renderCashierCards(data) {
+  var grid = document.getElementById('cashierCardsGrid');
+  grid.innerHTML = '';
+
+  data.forEach(function(item) {
+    var c       = item.cashier;
+    var isOpen  = _cpActiveId === c.id;
+    var inits   = c.name.split(' ').map(function(p){ return p[0]; }).slice(0,2).join('');
+    var avgTxn  = item.monthInvoices ? (item.monthRev / item.monthInvoices) : 0;
+
+    var card = document.createElement('div');
+    card.className = 'cp-card' + (isOpen ? ' active' : '');
+
+    card.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">' +
+        '<div class="cp-avatar">' + escH(inits) + '</div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-weight:600;font-size:13px;color:#1a1d2e;">' + escH(c.name) + '</div>' +
+          '<div style="font-size:11px;color:#9aa3c2;">Cashier</div>' +
+        '</div>' +
+'<span class="material-symbols-rounded cp-chevron" style="font-size:16px;color:#c4c9dd;">' + (isOpen ? 'expand_less' : 'expand_more') + '</span>' +      '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px;">' +
+        '<div><div style="font-size:10px;color:#9aa3c2;">Today\'s revenue</div>' +
+          '<div style="font-size:13px;font-weight:700;color:#1a1d2e;">₱' + item.todayRev.toFixed(2) + '</div></div>' +
+        '<div style="text-align:right;"><div style="font-size:10px;color:#9aa3c2;">Invoices</div>' +
+          '<div style="font-size:13px;font-weight:700;color:#1a1d2e;">' + item.todayInvoices + '</div></div>' +
+      '</div>' +
+      '<div style="position:relative;height:44px;margin-bottom:2px;">' +
+        '<canvas id="spark-' + c.id + '" style="display:block;"></canvas>' +
+      '</div>' +
+      '<div class="cp-expand' + (isOpen ? ' open' : '') + '" id="cpExp-' + c.id + '">' +
+        '<div style="border-top:1px solid #f0f2f8;padding-top:12px;margin-top:12px;">' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">' +
+            '<div class="cp-stat-box"><div style="font-size:10px;color:#9aa3c2;">Today txns</div><div style="font-size:15px;font-weight:700;">' + item.todayInvoices + '</div></div>' +
+            '<div class="cp-stat-box"><div style="font-size:10px;color:#9aa3c2;">Today rev</div><div style="font-size:13px;font-weight:700;color:#16a34a;">₱' + item.todayRev.toFixed(2) + '</div></div>' +
+            '<div class="cp-stat-box"><div style="font-size:10px;color:#9aa3c2;">Voided</div><div style="font-size:15px;font-weight:700;color:#dc2626;">' + item.voided + '</div></div>' +
+            '<div class="cp-stat-box"><div style="font-size:10px;color:#9aa3c2;">Month txns</div><div style="font-size:15px;font-weight:700;">' + item.monthInvoices + '</div></div>' +
+            '<div class="cp-stat-box"><div style="font-size:10px;color:#9aa3c2;">Month rev</div><div style="font-size:13px;font-weight:700;color:#16a34a;">₱' + item.monthRev.toFixed(2) + '</div></div>' +
+            '<div class="cp-stat-box"><div style="font-size:10px;color:#9aa3c2;">Avg/txn</div><div style="font-size:13px;font-weight:700;">₱' + avgTxn.toFixed(2) + '</div></div>' +
+          '</div>' +
+          '<div style="font-size:10px;font-weight:700;color:#9aa3c2;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">Recent transactions</div>' +
+          (item.recentTxns.length ? item.recentTxns.map(function(t) {
+            var isPaid = t.status !== 'voided';
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f5f6fa;font-size:12px;">' +
+              '<div><div style="font-weight:600;color:#1a1d2e;">' + escH(t.invoice_number) + '</div>' +
+                '<div style="font-size:11px;color:#9aa3c2;">' + (t.invoice_date ? t.invoice_date.slice(0,10) : '—') + ' · ' + escH(t.payment_method||'—') + '</div></div>' +
+              '<div style="display:flex;align-items:center;gap:8px;">' +
+                '<span style="font-weight:700;">₱' + parseFloat(t.grand_total).toFixed(2) + '</span>' +
+                '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:20px;background:' + (isPaid?'#eefbf2':'#fef2f2') + ';color:' + (isPaid?'#15803d':'#b91c1c') + ';">' + t.status + '</span>' +
+              '</div>' +
+            '</div>';
+          }).join('') : '<div style="font-size:12px;color:#9aa3c2;padding:8px 0;">No transactions yet</div>') +
+          '<button class="btn-sm blue" style="margin-top:12px;width:100%;" onclick="window.location.href=R.cashierView(' + c.id + ')">' +
+            '<span class="material-symbols-rounded">visibility</span>View full dashboard</button>' +
+        '</div>' +
+      '</div>';
+
+card.addEventListener('click', function(e) {
+  if (e.target.closest('button') || e.target.closest('a')) return;
+
+  var wasActive = _cpActiveId === c.id;
+  _cpActiveId = wasActive ? null : c.id;
+
+  // Close ALL cards
+  document.querySelectorAll('.cp-card').forEach(function(el) {
+    el.classList.remove('active');
+    var exp = el.querySelector('.cp-expand');
+    var chevron = el.querySelector('.cp-chevron');
+    if (exp) exp.classList.remove('open');
+    if (chevron) chevron.textContent = 'expand_more';
+  });
+
+  // Open clicked one
+  if (!wasActive) {
+    card.classList.add('active');
+    var exp = card.querySelector('.cp-expand');
+    var chevron = card.querySelector('.cp-chevron');
+    if (exp) exp.classList.add('open');
+    if (chevron) chevron.textContent = 'expand_less';
+  }
+
+  setTimeout(function() {
+    data.forEach(function(item) {
+      var canvas = document.getElementById('spark-' + item.cashier.id);
+      if (!canvas) return;
+      if (_cpCharts[item.cashier.id]) _cpCharts[item.cashier.id].destroy();
+      var isOpen = _cpActiveId === item.cashier.id;
+      _cpCharts[item.cashier.id] = new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels: ['','','','','','',''],
+          datasets: [{ data: item.trend, borderColor: isOpen ? '#3d52d5' : '#c4c9dd', borderWidth: 1.5, fill: true, backgroundColor: isOpen ? 'rgba(61,82,213,0.07)' : 'rgba(196,201,221,0.1)', tension: 0.4, pointRadius: 0 }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend:{display:false}, tooltip:{enabled:false} },
+          scales: { x:{display:false}, y:{display:false} },
+          animation: { duration: 150 }
+        }
+      });
+    });
+  }, 50);
 });
+    grid.appendChild(card);
+  });
+
+  // Draw sparklines after DOM is ready
+  requestAnimationFrame(function() {
+    data.forEach(function(item) {
+      var canvas = document.getElementById('spark-' + item.cashier.id);
+      if (!canvas) return;
+      if (_cpCharts[item.cashier.id]) _cpCharts[item.cashier.id].destroy();
+      var isOpen = _cpActiveId === item.cashier.id;
+      _cpCharts[item.cashier.id] = new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels: ['','','','','','',''],
+          datasets: [{ data: item.trend, borderColor: isOpen ? '#3d52d5' : '#c4c9dd', borderWidth: 1.5, fill: true, backgroundColor: isOpen ? 'rgba(61,82,213,0.07)' : 'rgba(196,201,221,0.1)', tension: 0.4, pointRadius: 0 }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          scales: { x: { display: false }, y: { display: false } },
+          animation: { duration: 150 }
+        }
+      });
+    });
+  });
+}
