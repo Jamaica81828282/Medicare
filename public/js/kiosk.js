@@ -52,13 +52,13 @@ function searchCustomer(val) {
       list.innerHTML = customers.map(function(c) {
         var senior  = c.is_senior ? ' · Senior' : '';
         var pwd     = c.is_pwd    ? ' · PWD'    : '';
-        var encoded = escHtml(JSON.stringify(c));
-        return '<div class="search-result-item" onclick="useProfile(\'' + encoded + '\')">' +
+        var encoded = encodeURIComponent(JSON.stringify(c));
+        return '<div class="search-result-item" data-profile="' + encoded + '" onclick="useProfileFromEvent(this)">' +
           '<div>' +
             '<div class="sr-name">' + escHtml(c.first_name + ' ' + c.last_name) + '</div>' +
             '<div class="sr-detail">' + escHtml(c.phone) + ' · ' + c.order_count + ' past order(s)' + senior + pwd + '</div>' +
           '</div>' +
-          '<button class="btn-use" onclick="event.stopPropagation();useProfile(\'' + encoded + '\')">Use Profile</button>' +
+          '<button type="button" class="btn-use" onclick="event.stopPropagation();useProfileFromEvent(this.closest(\'.search-result-item\'))">Use Profile</button>' +
         '</div>';
       }).join('');
     })
@@ -108,6 +108,13 @@ function useProfile(jsonStr) {
   renderProducts();
   showScreen('screen-shop');
   showToast('Welcome back, ' + c.first_name + '!', 'success');
+}
+
+function useProfileFromEvent(el) {
+  if (!el) { return; }
+  var target = el.closest ? el.closest('.search-result-item') : el;
+  if (!target || !target.dataset || !target.dataset.profile) { return; }
+  useProfile(decodeURIComponent(target.dataset.profile));
 }
 
 function escHtml(str) {
